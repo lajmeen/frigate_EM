@@ -1,0 +1,12 @@
+{
+  "name": "Frigate EM",
+  "repository": "lajmeen/frigate_EM",
+  "version": "1.0.0",
+  "homeassistant": "2022.1.0",
+  "config_flow": true,
+  "documentation": "https://github.com/lajmeen/frigate_EM/blob/main/README.md",
+  "issue_tracker": "https://github.com/lajmeen/frigate_EM/issues",
+  "dependencies": [],
+  "requirements": [],
+  "codeowners": ["@lajmeen"]
+}
