@@ -39,10 +39,7 @@ ARG DEBIAN_FRONTEND
 ENV CCACHE_DIR /root/.ccache
 ENV CCACHE_MAXSIZE 2G
 
-# bind /var/cache/apt to tmpfs to speed up nginx build
-RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/var/cache/apt \
-    --mount=type=bind,source=docker/main/build_nginx.sh,target=/deps/build_nginx.sh \
-    --mount=type=cache,target=/root/.ccache \
+RUN --mount=type=bind,source=docker/main/build_nginx.sh,target=/deps/build_nginx.sh \
     /deps/build_nginx.sh
 
 FROM wget AS sqlite-vec
@@ -58,7 +55,7 @@ RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/var/cache/apt \
 FROM scratch AS go2rtc
 ARG TARGETARCH
 WORKDIR /rootfs/usr/local/go2rtc/bin
-ADD --link --chmod=755 "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.2/go2rtc_linux_${TARGETARCH}" go2rtc
+ADD --link --chmod=755 "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.9/go2rtc_linux_${TARGETARCH}" go2rtc
 
 FROM wget AS tempio
 ARG TARGETARCH

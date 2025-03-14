@@ -22,6 +22,7 @@ from markupsafe import escape
 from peewee import operator
 from pydantic import ValidationError
 
+from frigate.api.auth import require_role
 from frigate.api.defs.query.app_query_parameters import AppTimelineHourlyQueryParameters
 from frigate.api.defs.request.app_body import AppConfigSetBody
 from frigate.api.defs.tags import Tags
@@ -201,7 +202,7 @@ def config_raw():
         )
 
 
-@router.post("/config/save")
+@router.post("/config/save", dependencies=[Depends(require_role(["admin"]))])
 def config_save(save_option: str, body: Any = Body(media_type="text/plain")):
     new_config = body.decode()
     if not new_config:
@@ -326,7 +327,7 @@ def config_save(save_option: str, body: Any = Body(media_type="text/plain")):
         )
 
 
-@router.put("/config/set")
+@router.put("/config/set", dependencies=[Depends(require_role(["admin"]))])
 def config_set(request: Request, body: AppConfigSetBody):
     config_file = find_config_file()
 
@@ -542,7 +543,7 @@ async def logs(
         )
 
 
-@router.post("/restart")
+@router.post("/restart", dependencies=[Depends(require_role(["admin"]))])
 def restart():
     try:
         restart_frigate()
@@ -616,6 +617,41 @@ def get_sub_labels(split_joined: Optional[int] = None):
 
     sub_labels.sort()
     return JSONResponse(content=sub_labels)
+
+
+@router.get("/recognized_license_plates")
+def get_recognized_license_plates(split_joined: Optional[int] = None):
+    try:
+        events = Event.select(Event.data).distinct()
+    except Exception:
+        return JSONResponse(
+            content=(
+                {"success": False, "message": "Failed to get recognized license plates"}
+            ),
+            status_code=404,
+        )
+
+    recognized_license_plates = []
+    for e in events:
+        if e.data is not None and "recognized_license_plate" in e.data:
+            recognized_license_plates.append(e.data["recognized_license_plate"])
+
+    while None in recognized_license_plates:
+        recognized_license_plates.remove(None)
+
+    if split_joined:
+        original_recognized_license_plates = recognized_license_plates.copy()
+        for recognized_license_plate in original_recognized_license_plates:
+            if recognized_license_plate and "," in recognized_license_plate:
+                recognized_license_plates.remove(recognized_license_plate)
+                parts = recognized_license_plate.split(",")
+                for part in parts:
+                    if part.strip() not in recognized_license_plates:
+                        recognized_license_plates.append(part.strip())
+
+    recognized_license_plates = list(set(recognized_license_plates))
+    recognized_license_plates.sort()
+    return JSONResponse(content=recognized_license_plates)
 
 
 @router.get("/timeline")

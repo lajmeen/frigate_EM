@@ -200,9 +200,12 @@ export default function LivePlayer({
   // enabled states
 
   const [isReEnabling, setIsReEnabling] = useState(false);
-  const prevCameraEnabledRef = useRef(cameraEnabled);
+  const prevCameraEnabledRef = useRef(cameraEnabled ?? true);
 
   useEffect(() => {
+    if (cameraEnabled == undefined) {
+      return;
+    }
     if (!prevCameraEnabledRef.current && cameraEnabled) {
       // Camera enabled
       setLiveReady(false);
@@ -298,22 +301,6 @@ export default function LivePlayer({
     player = <ActivityIndicator />;
   }
 
-  // if (cameraConfig.name == "lpr")
-  //   console.log(
-  //     cameraConfig.name,
-  //     "enabled",
-  //     cameraEnabled,
-  //     "prev enabled",
-  //     prevCameraEnabledRef.current,
-  //     "offline",
-  //     offline,
-  //     "show still",
-  //     showStillWithoutActivity,
-  //     "live ready",
-  //     liveReady,
-  //     player,
-  //   );
-
   return (
     <div
       ref={cameraRef ?? internalContainerRef}
@@ -375,7 +362,9 @@ export default function LivePlayer({
                   {[
                     ...new Set([
                       ...(objects || []).map(({ label, sub_label }) =>
-                        label.endsWith("verified") ? sub_label : label,
+                        label.endsWith("verified")
+                          ? sub_label
+                          : label.replaceAll("_", " "),
                       ),
                     ]),
                   ]
@@ -408,7 +397,7 @@ export default function LivePlayer({
         />
       </div>
 
-      {offline && !showStillWithoutActivity && (
+      {offline && !showStillWithoutActivity && cameraEnabled && (
         <div className="absolute inset-0 left-1/2 top-1/2 flex h-96 w-96 -translate-x-1/2 -translate-y-1/2">
           <div className="flex flex-col items-center justify-center rounded-lg bg-background/50 p-5">
             <p className="my-5 text-lg">Stream offline</p>

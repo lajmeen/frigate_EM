@@ -15,6 +15,7 @@ from playhouse.sqliteq import SqliteQueueDatabase
 
 from frigate.comms.embeddings_updater import EmbeddingsRequestEnum, EmbeddingsResponder
 from frigate.comms.event_metadata_updater import (
+    EventMetadataPublisher,
     EventMetadataSubscriber,
     EventMetadataTypeEnum,
 )
@@ -43,12 +44,16 @@ from frigate.data_processing.real_time.license_plate import (
     LicensePlateRealTimeProcessor,
 )
 from frigate.data_processing.types import DataProcessorMetrics, PostProcessDataEnum
-from frigate.events.types import EventTypeEnum
+from frigate.events.types import EventTypeEnum, RegenerateDescriptionEnum
 from frigate.genai import get_genai_client
 from frigate.models import Event
 from frigate.types import TrackedObjectUpdateTypesEnum
 from frigate.util.builtin import serialize
-from frigate.util.image import SharedMemoryFrameManager, calculate_region
+from frigate.util.image import (
+    SharedMemoryFrameManager,
+    calculate_region,
+    ensure_jpeg_bytes,
+)
 from frigate.util.path import get_event_thumbnail_bytes
 
 from .embeddings import Embeddings
@@ -85,6 +90,7 @@ class EmbeddingMaintainer(threading.Thread):
 
         self.event_subscriber = EventUpdateSubscriber()
         self.event_end_subscriber = EventEndSubscriber()
+        self.event_metadata_publisher = EventMetadataPublisher()
         self.event_metadata_subscriber = EventMetadataSubscriber(
             EventMetadataTypeEnum.regenerate_description
         )
@@ -104,15 +110,27 @@ class EmbeddingMaintainer(threading.Thread):
         self.realtime_processors: list[RealTimeProcessorApi] = []
 
         if self.config.face_recognition.enabled:
-            self.realtime_processors.append(FaceRealTimeProcessor(self.config, metrics))
+            self.realtime_processors.append(
+                FaceRealTimeProcessor(
+                    self.config, self.event_metadata_publisher, metrics
+                )
+            )
 
         if self.config.classification.bird.enabled:
-            self.realtime_processors.append(BirdRealTimeProcessor(self.config, metrics))
+            self.realtime_processors.append(
+                BirdRealTimeProcessor(
+                    self.config, self.event_metadata_publisher, metrics
+                )
+            )
 
         if self.config.lpr.enabled:
             self.realtime_processors.append(
                 LicensePlateRealTimeProcessor(
-                    self.config, metrics, lpr_model_runner, self.detected_license_plates
+                    self.config,
+                    self.event_metadata_publisher,
+                    metrics,
+                    lpr_model_runner,
+                    self.detected_license_plates,
                 )
             )
 
@@ -122,12 +140,17 @@ class EmbeddingMaintainer(threading.Thread):
         if self.config.lpr.enabled:
             self.post_processors.append(
                 LicensePlatePostProcessor(
-                    self.config, metrics, lpr_model_runner, self.detected_license_plates
+                    self.config,
+                    self.event_metadata_publisher,
+                    metrics,
+                    lpr_model_runner,
+                    self.detected_license_plates,
                 )
             )
 
         self.stop_event = stop_event
         self.tracked_events: dict[str, list[any]] = {}
+        self.early_request_sent: dict[str, bool] = {}
         self.genai_client = get_genai_client(config)
 
         # recordings data
@@ -145,6 +168,7 @@ class EmbeddingMaintainer(threading.Thread):
         self.event_subscriber.stop()
         self.event_end_subscriber.stop()
         self.recordings_subscriber.stop()
+        self.event_metadata_publisher.stop()
         self.event_metadata_subscriber.stop()
         self.embeddings_responder.stop()
         self.requestor.stop()
@@ -236,6 +260,43 @@ class EmbeddingMaintainer(threading.Thread):
 
             self.tracked_events[data["id"]].append(data)
 
+        # check if we're configured to send an early request after a minimum number of updates received
+        if (
+            self.genai_client is not None
+            and camera_config.genai.send_triggers.after_significant_updates
+        ):
+            if (
+                len(self.tracked_events.get(data["id"], []))
+                >= camera_config.genai.send_triggers.after_significant_updates
+                and data["id"] not in self.early_request_sent
+            ):
+                if data["has_clip"] and data["has_snapshot"]:
+                    event: Event = Event.get(Event.id == data["id"])
+
+                    if (
+                        not camera_config.genai.objects
+                        or event.label in camera_config.genai.objects
+                    ) and (
+                        not camera_config.genai.required_zones
+                        or set(data["entered_zones"])
+                        & set(camera_config.genai.required_zones)
+                    ):
+                        logger.debug(f"{camera} sending early request to GenAI")
+
+                        self.early_request_sent[data["id"]] = True
+                        threading.Thread(
+                            target=self._genai_embed_description,
+                            name=f"_genai_embed_description_{event.id}",
+                            daemon=True,
+                            args=(
+                                event,
+                                [
+                                    data["thumbnail"]
+                                    for data in self.tracked_events[data["id"]]
+                                ],
+                            ),
+                        ).start()
+
         self.frame_manager.close(frame_name)
 
     def _process_finalized(self) -> None:
@@ -296,8 +357,8 @@ class EmbeddingMaintainer(threading.Thread):
                 # Run GenAI
                 if (
                     camera_config.genai.enabled
+                    and camera_config.genai.send_triggers.tracked_object_end
                     and self.genai_client is not None
-                    and event.data.get("description") is None
                     and (
                         not camera_config.genai.objects
                         or event.label in camera_config.genai.objects
@@ -333,15 +394,17 @@ class EmbeddingMaintainer(threading.Thread):
 
     def _process_event_metadata(self):
         # Check for regenerate description requests
-        (topic, event_id, source) = self.event_metadata_subscriber.check_for_update(
-            timeout=0.01
-        )
+        (topic, payload) = self.event_metadata_subscriber.check_for_update(timeout=0.01)
 
         if topic is None:
             return
 
+        event_id, source = payload
+
         if event_id:
-            self.handle_regenerate_description(event_id, source)
+            self.handle_regenerate_description(
+                event_id, RegenerateDescriptionEnum(source)
+            )
 
     def _create_thumbnail(self, yuv_frame, box, height=500) -> Optional[bytes]:
         """Return jpg thumbnail of a region of the frame."""
@@ -373,6 +436,9 @@ class EmbeddingMaintainer(threading.Thread):
                 return
 
         num_thumbnails = len(self.tracked_events.get(event.id, []))
+
+        # ensure we have a jpeg to pass to the model
+        thumbnail = ensure_jpeg_bytes(thumbnail)
 
         embed_image = (
             [snapshot_image]
@@ -502,6 +568,9 @@ class EmbeddingMaintainer(threading.Thread):
             return
 
         thumbnail = get_event_thumbnail_bytes(event)
+
+        # ensure we have a jpeg to pass to the model
+        thumbnail = ensure_jpeg_bytes(thumbnail)
 
         logger.debug(
             f"Trying {source} regeneration for {event}, has_snapshot: {event.has_snapshot}"

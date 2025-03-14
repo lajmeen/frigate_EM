@@ -333,6 +333,23 @@ function ObjectDetailsTab({
     }
   }, [search]);
 
+  const recognizedLicensePlateScore = useMemo(() => {
+    if (!search) {
+      return undefined;
+    }
+
+    if (
+      search.data.recognized_license_plate &&
+      search.data?.recognized_license_plate_score
+    ) {
+      return Math.round(
+        (search.data?.recognized_license_plate_score ?? 0) * 100,
+      );
+    } else {
+      return undefined;
+    }
+  }, [search]);
+
   const averageEstimatedSpeed = useMemo(() => {
     if (!search || !search.data?.average_estimated_speed) {
       return undefined;
@@ -394,8 +411,12 @@ function ObjectDetailsTab({
           },
         );
       })
-      .catch(() => {
-        toast.error("Failed to update the description", {
+      .catch((error) => {
+        const errorMessage =
+          error.response?.data?.message ||
+          error.response?.data?.detail ||
+          "Unknown error";
+        toast.error(`Failed to update the description: ${errorMessage}`, {
           position: "top-center",
         });
         setDesc(search.data.description);
@@ -422,11 +443,13 @@ function ObjectDetailsTab({
           }
         })
         .catch((error) => {
+          const errorMessage =
+            error.response?.data?.message ||
+            error.response?.data?.detail ||
+            "Unknown error";
           toast.error(
-            `Failed to call ${capitalizeAll(config?.genai.provider.replaceAll("_", " ") ?? "Generative AI")} for a new description: ${error.response.data.message}`,
-            {
-              position: "top-center",
-            },
+            `Failed to call ${capitalizeAll(config?.genai.provider.replaceAll("_", " ") ?? "Generative AI")} for a new description: ${errorMessage}`,
+            { position: "top-center" },
           );
         });
     },
@@ -492,8 +515,12 @@ function ObjectDetailsTab({
             setIsSubLabelDialogOpen(false);
           }
         })
-        .catch(() => {
-          toast.error("Failed to update sub label.", {
+        .catch((error) => {
+          const errorMessage =
+            error.response?.data?.message ||
+            error.response?.data?.detail ||
+            "Unknown error";
+          toast.error(`Failed to update sub label: ${errorMessage}`, {
             position: "top-center",
           });
         });
@@ -528,6 +555,20 @@ function ObjectDetailsTab({
               </Tooltip>
             </div>
           </div>
+          {search?.data.recognized_license_plate && (
+            <div className="flex flex-col gap-1.5">
+              <div className="text-sm text-primary/40">
+                Recognized License Plate
+              </div>
+              <div className="flex flex-col space-y-0.5 text-sm">
+                <div className="flex flex-row items-center gap-2">
+                  {search.data.recognized_license_plate}{" "}
+                  {recognizedLicensePlateScore &&
+                    ` (${recognizedLicensePlateScore}%)`}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <div className="text-sm text-primary/40">
               <div className="flex flex-row items-center gap-1">
