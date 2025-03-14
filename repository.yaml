@@ -1,22 +1,3 @@
 name: Frigate_EM
 url: https://github.com/lajmeen/frigate_EM/
 maintainer: Lajmeen
-addons:
-  - slug: frigate_em
-    name: Frigate EM
-    description: "Frigate EM är en videoövervakningstjänst som använder Frigate och EdgeML för objektigenkänning."
-    version: "1.0"
-    url: "https://github.com/lajmeen/frigate_EM"
-    arch:
-      - aarch64
-      - amd64
-    startup: "auto"
-    boot: "auto"
-    host_network: true
-    map:
-      - "config:rw"
-      - "media:rw"
-    options:
-      frigate_config: "/homeassistant/frigate.yaml"  # Länka till din frigate.yaml-fil
-    schema:
-      frigate_config: "str"
